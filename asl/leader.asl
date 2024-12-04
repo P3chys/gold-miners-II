@@ -1,5 +1,3 @@
-// leader agent
-
 /* quadrant allocation */
 
 @quads[atomic]
@@ -30,7 +28,9 @@
 +!inform_quad(_,Miner,_)
   <- .print("Miner ",Miner," is in the depot quadrant.").
 
-
++miner_status(Miner, carrying(N))
+  <- .findall(carrying(X,M), miner_status(M,carrying(X)), AllLoads);
+     !optimize_assignments(AllLoads).
 /*
 
      +init_pos(S,X,Y)[source(A)]

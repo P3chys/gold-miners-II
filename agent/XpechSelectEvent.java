@@ -21,18 +21,30 @@ public class XpechSelectEvent extends Agent {
     private Unifier un   = new Unifier();
 
     public Event selectEvent(Queue<Event> events) {
-        Iterator<Event> ie = events.iterator();
+    Iterator<Event> ie = events.iterator();
+    
+    // Prioritize gold, restart, and critical events in that order
+    Trigger[] criticalTriggers = {
+        Trigger.parseTrigger("+cell(_,_,gold)"),
+        Trigger.parseTrigger("+restart"),
+        Trigger.parseTrigger("+end_of_simulation(_,_)"),
+        Trigger.parseTrigger("+committed_to(_,_,_)")
+    };
+
+    for (Trigger criticalTrigger : criticalTriggers) {
+        ie = events.iterator();
         while (ie.hasNext()) {
             un.clear();
             Event e = ie.next();
-            if (un.unifies(gold, e.getTrigger()) || un.unifies(restart, e.getTrigger())) {
-                //getTS().getLogger().info("custom select event "+e);
+            if (un.unifies(criticalTrigger, e.getTrigger())) {
                 ie.remove();
                 return e;
             }
         }
-        return super.selectEvent(events);
     }
+    
+    return super.selectEvent(events);
+}
 
 
 }

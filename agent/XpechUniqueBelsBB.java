@@ -6,74 +6,52 @@ import jason.asSyntax.Literal;
 import jason.asSyntax.Term;
 import jason.bb.DefaultBeliefBase;
 
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import jason.asSemantics.Unifier;
+import java.util.*;
+import java.util.stream.Collectors;
 
-/**
- * Customised version of Belief Base where some beliefs are unique (with primary keys).
- * <p>E.g.:<br/>
- * <code>beliefBaseClass agent.UniqueBelsBB("student(key,_)", "depot(_,_,_)")</code>
- * <br/>
- * The belief "student/2" has the first argument as its key, so the BB will never has
- * two students with the same key. Or, two students in the BB will have two different keys.
- * The belief "depot/3" has no key, so there will be always only one "depot" in the BB.
- *
- * @author jomi
- */
+
 public class XpechUniqueBelsBB extends DefaultBeliefBase {
-    //static private Logger logger = Logger.getLogger(UniqueBelsBB.class.getName());
-
-    Map<String,Literal> uniqueBels = new HashMap<String,Literal>();
-    Unifier             u = new Unifier();
+    private Map<String, Set<String>> uniqueKeyFields = new HashMap<>();
+    private Unifier u = new Unifier(); // Explicitly declare the Unifier
 
     public void init(Agent ag, String[] args) {
-        for (int i=0; i<args.length; i++) {
-            Literal arg = Literal.parseLiteral(args[i]);
-            uniqueBels.put(arg.getFunctor(), arg);
-        }
+        // Define fields that should be unique across belief types
+        uniqueKeyFields.put("gold", new HashSet<>(Arrays.asList("0", "1"))); // x, y coordinates
+        uniqueKeyFields.put("committed_to", new HashSet<>(Arrays.asList("0"))); // gold location
+        uniqueKeyFields.put("depot", new HashSet<>(Arrays.asList("0"))); // scenario identifier
     }
 
-    @Override
-    public boolean add(Literal bel) {
-        Literal kb = uniqueBels.get(bel.getFunctor());
-        if (kb != null && kb.getArity() == bel.getArity()) {
-
-            // find the bel in BB and eventually remove it
-            u.clear();
-            Literal linbb = null;
-            boolean remove = false;
-
-            Iterator<Literal> relevant = getCandidateBeliefs(bel, null);
-            if (relevant != null) {
-                while (relevant.hasNext() && !remove) {
-                    linbb = relevant.next();
-
-                    boolean equals = true;
-                    for (int i = 0; i<kb.getArity(); i++) {
-                        Term kbt = kb.getTerm(i);
-                        if (!kbt.isVar()) {
-                            if (!u.unifies(bel.getTerm(i), linbb.getTerm(i))) {
-                                equals = false;
-                                break;
-                            }
-                        }
-                    }
-                    if (equals) {
-                        remove = true;
+   @Override
+public boolean add(Literal bel) {
+    try {
+        String functor = bel.getFunctor();
+        if (uniqueKeyFields.containsKey(functor)) {
+            Set<String> keyIndexes = uniqueKeyFields.get(functor);
+            
+            Iterator<Literal> existing = getCandidateBeliefs(bel, null);
+            while (existing != null && existing.hasNext()) {
+                Literal existingBel = existing.next();
+                boolean shouldReplace = true;
+                
+                for (int keyIndex : keyIndexes.stream().mapToInt(Integer::parseInt).toArray()) {
+                    if (!u.unifies(bel.getTerm(keyIndex), existingBel.getTerm(keyIndex))) {
+                        shouldReplace = false;
+                        break;
                     }
                 }
-            }
-            if (remove) {
-                remove(linbb);
+                
+                if (shouldReplace) {
+                    remove(existingBel);
+                    break;
+                }
             }
         }
-         try {
+        
         return super.add(bel);
-    } catch(Exception e){
-         e.printStackTrace();
+    } catch (Exception e) {
+        e.printStackTrace();
         return false;
     }
-    }
-
+}
 }

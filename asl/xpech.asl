@@ -1,31 +1,26 @@
-// miner agent
+// Hyper-aggressive miner agent focused on immediate gold collection
 
-{ include("moving.asl") }               // plans for movements in the scenario
-{ include("search_unvisited.asl") }     // plans for finding gold
-{ include("search_quadrant.asl") }      // idem
-{ include("fetch_gold.asl") }           // plans for fetch gold goal
-{ include("goto_depot.asl") }           // plans for go to depot goal
-{ include("allocation_protocol.asl") }  // plans for the gold allocation protocol
+{ include("moving.asl") }
+{ include("search_unvisited.asl") }
+{ include("search_quadrant.asl") }
+{ include("fetch_gold.asl") }
+{ include("goto_depot.asl") }
+{ include("allocation_protocol.asl") }
 
 /* functions */
-
 { register_function("carrying.gold",0,"carrying_gold") }
 { register_function("jia.path_length",4,"jia.path_length") }
 
-/* beliefs */
-
+//----------------------------------------BELIEFS--------------------------------//
 free.
 my_capacity(3).
+last_success(none, none).  // Remember last successful gold location
+area_failed_cycles(0).    // Track how long we've been unsuccessful in an area
 
-
-search_gold_strategy(near_unvisited). // initial strategy
-//search_gold_strategy(quadrant).
-
-
-/* Initial goal (triggered when step 0 is perceived) */
+//----------------------------------------INIT----------------------------------------//
 +pos(_,_,0)
   <- ?gsize(S,_,_);
-     .print("Starting simulation ", S);
+     .print("=== AGGRESSIVE MINER INITIALIZED ===");
      !inform_gsize_to_leader(S);
      !choose_goal.
 
@@ -36,183 +31,126 @@ search_gold_strategy(near_unvisited). // initial strategy
       .send(leader,tell,gsize(S,W,H)).
 +!inform_gsize_to_leader(_).
 
+//----------------------------------------FAILED AREA HANDLING----------------------------------------//
++!check_area_productivity
+  :  area_failed_cycles(N) & N > 15 &    // If no gold found for 15 cycles
+     .findall(gold(X,Y), gold(X,Y), GoldList) &
+     GoldList \== [] 
+  <- .print("=== Area unproductive, moving towards known gold");
+     .random(GoldList, gold(TargetX,TargetY));  // Pick random known gold
+     !goto_near(TargetX,TargetY).
 
-/*
-   decide the goal transition
-     . pursue known gold, or
-     . to go to depot to drop golds,
-     . search gold
-*/
++!goto_near(X,Y)
+  :  pos(AgX,AgY,_)
+  <- RX = math.random(8) - 4;   // Random offset near target
+     RY = math.random(8) - 4;
+     NewX = X + RX;
+     NewY = Y + RY;
+     -+area_failed_cycles(0);    // Reset counter
+     !goto(NewX,NewY).
 
-// Others golds left and I have space
-// find the closest gold among the known options
-@cgod2[atomic]
+// Update cycle counter when moving without finding gold
++step(S)
+  :  not .desire(quick_fetch(_))
+  <- ?area_failed_cycles(N);
+     -+area_failed_cycles(N+1);
+     if (N+1 mod 5 == 0) {
+         !check_area_productivity;
+     }.
+
+// Reset counter when finding gold
++cell(X,Y,gold)
+  <- -+area_failed_cycles(0).
+
+//----------------------------------------EMERGENCY DEPOT RETURN----------------------------------------//
+// Super aggressive depot return timing - don't risk losing gold
+should_return_to_depot :- carrying_gold(3).
+should_return_to_depot :- 
+    carrying_gold(N) & N > 0 & 
+    pos(_,_,Step) & 
+    steps(_,TotalSteps) & 
+    Step + 70 > TotalSteps.  // Even earlier return than dummy
+
+//----------------------------------------IMMEDIATE GOLD GRABBING----------------------------------------//
+// Highest priority - Immediate response to seeing gold
+@gold_spotted[atomic]
++cell(GX,GY,gold)
+  :  carrying_gold(N) & N < 3 &
+     pos(X,Y,_)
+  <- .print("=== GOLD SPOTTED! Moving to [", GX, ",", GY, "]");
+     .drop_all_desires;  // Drop everything immediately
+     -+last_success(GX,GY);  // Remember this spot
+     !quick_fetch(gold(GX,GY)).
+
+// Direct movement to gold - minimal computation
++!quick_fetch(gold(GX,GY))
+  :  pos(X,Y,_) &
+     not should_return_to_depot
+  <- jia.direction(X, Y, GX, GY, D);
+     do(D).
+
+// If should return to depot while fetching, do it immediately
++!quick_fetch(gold(GX,GY))
+  :  should_return_to_depot
+  <- !emergency_depot_return.
+
+//----------------------------------------AGGRESSIVE DEPOT RETURN----------------------------------------//
++!emergency_depot_return
+  :  pos(X,Y,_) &
+     depot(_,DX,DY)
+  <- jia.direction(X, Y, DX, DY, D);
+     do(D).
+
+//----------------------------------------AGGRESSIVE SEARCH----------------------------------------//
+// Search near last successful location first
 +!choose_goal
- :  container_has_space &               // I have space for more gold
-    .findall(gold(X,Y),gold(X,Y),LG) &  // LG is all known golds
-    evaluate_golds(LG,LD) &             // evaluate golds in LD
-    .print("All golds=",LG,", evaluation=",LD) &
-    .length(LD) > 0 &                   // is there a gold to fetch?
-    .min(LD,d(D,NewG,_)) &              // get the near
-    worthwhile(NewG)
- <- .print("Gold options are ",LD,". Next gold is ",NewG);
-    !change_to_fetch(NewG).
+  :  should_return_to_depot
+  <- !emergency_depot_return.
 
-+!choose_goal // there is no worth gold
- :  carrying_gold(NG) & NG > 0
- <- !change_to_goto_depot.
++!choose_goal
+  :  last_success(X,Y) & X \== none &
+     pos(AgX,AgY,_)
+  <- RX = math.random(10) - 5;
+     RY = math.random(10) - 5;
+     NewX = X + RX;
+     NewY = Y + RY;
+     !goto(NewX,NewY).
 
-+!choose_goal // not carrying gold, be free and search gold
- <- !change_to_search.
++!choose_goal
+  :  pos(AgX,AgY,_)
+  <- RX = math.random(20) - 10;
+     RY = math.random(20) - 10;
+     NewX = AgX + RX;
+     NewY = AgY + RY;
+     !goto(NewX,NewY).
 
++!choose_goal
+  :  not gold(_,_) &         // No gold in sight
+     area_failed_cycles(N) & N > 15 &
+     .findall(gold(X,Y), gold(X,Y), GoldList) &
+     GoldList \== []
+  <- !check_area_productivity.
+//----------------------------------------COORDINATE WITH OTHERS----------------------------------------//
+// Share gold findings but don't waste time on complex coordination
++gold(X,Y)[source(A)]
+  :  carrying_gold(N) & N < 3 &
+     pos(AgX,AgY,_)
+  <- !quick_fetch(gold(X,Y)).
 
-// change to goto_depot goal
+// Basic information sharing
++request_gold_info[source(Miner)]
+  <- .findall(gold(X,Y), gold(X,Y), GoldList);
+     .send(Miner, tell, known_golds(GoldList)).
 
-+!change_to_goto_depot             // nothing to do.
-  :  .desire(goto_depot)
-  <- .print("do not need to change to goto_depot").
-+!change_to_goto_depot             // drop fetch first
-  :  .desire(fetch_gold(G))
-  <- .drop_desire(fetch_gold(G));
-     !change_to_goto_depot.
-+!change_to_goto_depot             // none of above conditions
-  <- -free;
-     !!goto_depot.
-
-
-// change to fetch gold goal
-
-+!change_to_fetch(G)               // nothing to do
-  :  .desire(fetch_gold(G)).
-+!change_to_fetch(G)               // drop goto_depot first
-  :  .desire(goto_depot)
-  <- .drop_desire(goto_depot);
-     !change_to_fetch(G).
-+!change_to_fetch(G)               // change the gold to fetch
-  :  .desire(fetch_gold(OtherG))
-  <- .drop_desire(fetch_gold(OtherG));
-     !change_to_fetch(G).
-+!change_to_fetch(G)                // none of above conditions
-  <- -free;
-     !!fetch_gold(G).
-
-
-// change to search gold goal
-+!change_to_search
-  :  search_gold_strategy(S)
-  <- .print("New goal is find gold: ",S);
-     -free;
-     +free;
-     .drop_all_desires;
-     !!search_gold(S).
-
-
-// also calculates the agent distance for a list of golds,
-// but considers other agents committed to the same gold and
-// the agent fatigue
-evaluate_golds([],[]) :- true.
-evaluate_golds([gold(GX, GY)|R],[d(U,gold(GX,GY),Annot)|RD])
-  :- evaluate_gold(gold(GX,GY),U,Annot) &
-     evaluate_golds(R,RD).
-evaluate_golds([_|R],RD)
-  :- evaluate_golds(R,RD).
-
-evaluate_gold(gold(X,Y),Utility,Annot)
-  :- pos(AgX,AgY,_) & jia.path_length(AgX,AgY,X,Y,D) &
-     jia.add_fatigue(D,Utility) &
-     check_commit(gold(X,Y),Utility,Annot).
-
-// distance 0, always consider
-check_commit(_,0,in_my_place)   :- true.
-// if no other is committed to the gold, OK.
-check_commit(G,_,not_committed) :- not committed_to(G,_,_).
-// if someone else if committed, check who is nearer
-check_commit(gold(X,Y),MyD,committed_by(Ag,at(OtX,OtY),far(OtD)))
-  :- committed_to(gold(X,Y),_,Ag) &          // get the agent committed to the gold
-     jia.ag_pos(Ag,OtX,OtY) &                // get its location
-     jia.path_length(OtX,OtY,X,Y,OtD) &      // calc its distance from the gold
-     MyD < OtD.                              // ok to consider the gold if I am near
-
-
-worthwhile(gold(_,_)) :-
-     carrying_gold(0).
-worthwhile(gold(GX,GY)) :-
-     carrying_gold(NG) & NG > 0 &
-     pos(AgX,AgY,Step) &
-     depot(_,DX,DY) &
-     steps(_,TotalSteps) &
-     AvailableSteps = TotalSteps - Step &
-
-     // cost of fetching gold and after go to depot
-     jia.add_fatigue(jia.path_length(AgX,AgY,GX,GY),NG,  CN4) & // ag to gold
-     jia.add_fatigue(jia.path_length(GX,  GY,DX,DY),NG+1,CN5) & // go to depot
-
-     AvailableSteps > (CN4 + CN5) * 1.1.
-
-
-/*
-   Events handling
-     . gold perception
-
-   Note that perception (or communication) reaction should be
-   atomic, so that their corresponding plans are handled
-   before the current goal intention.
-*/
-
-
-
-// I perceived unknown gold, decide next gold
-@pcell0[atomic]          // atomic: so as not to handle another
-                         // event until handle gold is carrying on
-+cell(X,Y,gold)
-  :  container_has_space &
-     not gold(X,Y) // is is an unknown gold
-  <- .print("Gold perceived: ",gold(X,Y));
-     +gold(X,Y);
-     !choose_goal.
-
-// I am not free and do not have space, just add gold belief and announce to others
-+cell(X,Y,gold)
-  :  not container_has_space & not gold(X,Y) & not committed(gold(X,Y),_,_)
-  <- +gold(X,Y);
-     +announced(gold(X,Y));
-     .print("Announcing ",gold(X,Y)," to others");
-     .broadcast(tell,gold(X,Y)).
-
-// If I see an empty cell where it was supposed to be gold, announce it to others
-+cell(X,Y,empty)
-  :  gold(X,Y) &
-     not .desire(fetch_gold(gold(X,Y))) // in this case, I empty the cell!
-  <- !remove(gold(X,Y));
-     .print("The gold at ",X,",",Y," was picked by someone else! Announcing to others.");
-     .broadcast(tell,picked(gold(X,Y))).
-
-
-/* end of a simulation */
-
+//----------------------------------------CLEANUP----------------------------------------//
 +end_of_simulation(S,R)
   <- .drop_all_desires;
-     !remove(gold(_,_));
-     .abolish(picked(_));
-
-     -+search_gold_strategy(near_unvisited);
-     .abolish(quadrant(X1,Y1,X2,Y2));
-     .abolish(last_checked(_,_));
-
-     -+free;
-
+     -+last_success(none, none);
      .print("-- END ",S,": ",R).
-
-+!remove(gold(X,Y))
-  <- .abolish(gold(X,Y));
-     .abolish(committed_to(gold(X,Y),_,_));
-     .abolish(picked(gold(X,Y)));
-     .abolish(announced(gold(X,Y)));
-     .abolish(allocated(gold(X,Y),_)).
 
 @rl[atomic]
 +restart
-  <- .print("*** Start it all again!");
+  <- .print("*** Starting fresh ***");
      .drop_all_desires;
+     -+last_success(none, none);
      !choose_goal.
-
