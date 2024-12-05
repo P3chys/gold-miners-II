@@ -14,7 +14,8 @@
      !inform_quad(S,miner1,1);
      !inform_quad(S,miner2,2);
      !inform_quad(S,miner3,3);
-     !inform_quad(S,miner4,4).
+     !inform_quad(S,miner4,4);
+     !inform_quad(S,miner5,5).
 
 
 // only informs the quadrant if the depot is not in the quadrant

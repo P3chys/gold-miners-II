@@ -130,6 +130,11 @@ should_return_to_depot :-
      .findall(gold(X,Y), gold(X,Y), GoldList) &
      GoldList \== []
   <- !check_area_productivity.
+
++!choose_goal // not carrying gold, be free and search gold
+   <- RX = math.random(20) - 10;
+      RY = math.random(20) - 10;
+      !goto(RX,RY).
 //----------------------------------------COORDINATE WITH OTHERS----------------------------------------//
 // Share gold findings but don't waste time on complex coordination
 +gold(X,Y)[source(A)]
